@@ -26,7 +26,7 @@ To use the bot to play online, run `python browser.py [username] [password]`. Al
 ```
 {
     "username":"[your username]",
-    "password":"[your password]",
+    "password":"[your password]"
 }
 ```
 
