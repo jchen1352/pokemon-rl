@@ -1,0 +1,11 @@
+__pycache__/
+
+#Simulator pipes
+sim_in
+sim_out
+
+#JSON files
+*.json
+
+#Log files
+*.log
