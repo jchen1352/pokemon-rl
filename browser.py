@@ -32,7 +32,7 @@ class Browser():
         self.driver = webdriver.Chrome(chrome_options=o, desired_capabilities=d)
         self.driver.get('https://play.pokemonshowdown.com/')
         #Play on local server
-        #self.driver.get('http://localhost.psim.us/')
+        self.driver.get('http://localhost.psim.us/')
         self.timeout = timeout
         self.driver.implicitly_wait(timeout)
         self.console_stream = self.create_console_stream()
@@ -145,9 +145,9 @@ if __name__ == '__main__':
         username = args.username
         password = args.password
     a = Agent(username)
-    s = Browser(a, True)
+    s = Browser(a, False)
     s.start_driver()
     s.mute_sound()
     s.login(username, password)
     s.flush_console_stream()
-    #s.challenge('deltaepsilon3')
+    s.challenge('deltaepsilon3')

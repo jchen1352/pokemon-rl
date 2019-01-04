@@ -1,9 +1,5 @@
 import re
-from dex import pokedex, movedex
-
-def clean_name(s):
-    """Removes non-alphanumeric characters and turns to lowercase"""
-    return re.sub('[\W_]+', '', s).lower()
+from dex import *
 
 class Move:
     def __init__(self, name, pp=None, disabled=False):
@@ -14,10 +10,12 @@ class Move:
             name = m.group(1)
         self.name = name
         data = movedex[name]
-        self.move_type = data['type']
-        self.category = data['category']
+        self.move_type = clean_name(data['type'])
+        self.category = clean_name(data['category'])
         self.power = data['basePower']
         self.accuracy = data['accuracy']
+        if isinstance(self.accuracy, bool):
+            self.accuracy = 100
         self.priority = data['priority']
         self.maxpp = int(data['pp'] * 1.6)
         self.pp = pp or self.maxpp
@@ -49,9 +47,9 @@ class Pokemon:
         #NOTE: For attributes, None means unknown, '' means none
         self.name = name
         data = pokedex[name]
-        self.abilities = list(map(clean_name, data['abilities']))
+        self.abilities = data['abilities']
         self.base_stats = data['baseStats']
-        self.types = list(map(clean_name, data['types']))
+        self.types = data['types']
         self.level = level
         self.gender = gender
         self.nickname = nickname
@@ -108,9 +106,9 @@ class Pokemon:
     def change_form(self, name):
         self.name = name
         data = pokedex[name]
-        self.abilities = list(map(clean_name, data['abilities']))
+        self.abilities = data['abilities']
         self.base_stats = data['baseStats']
-        self.types = list(map(clean_name, data['types']))
+        self.types = data['types']
         if len(self.abilities) == 1:
             self.base_ability = self.abilities[0]
             self.ability = self.abilities[0]
@@ -135,7 +133,7 @@ class Pokemon:
         self.ability = self.base_ability
         data = pokedex[self.name]
         self.base_stats = data['baseStats']
-        self.types = list(map(clean_name, data['types']))
+        self.types = data['types']
 
     def transform(self, pokemon):
         self.transformed = True
@@ -166,45 +164,71 @@ class Pokemon:
 
 class GameData:
     def __init__(self):
-        boosts = ['atk', 'def', 'spa', 'spd', 'spe', 'accuracy', 'evasion']
-        poke_effects = ['confusion', 'curse', 'embargo', 'encore', 'healblock',
-            'foresight', 'miracleeye', 'attract', 'leechseed', 'nightmare',
-            'perish3', 'perish2', 'perish1', 'taunt', 'telekinesis', 'torment',
-            'aquaring', 'ingrain', 'magnetrise', 'powertrick', 'focusenergy',
-            'substitute']
-        side_effects = ['stealthrock', 'spikes', 'toxicspikes', 'stickyweb',
-            'tailwind', 'auroraveil', 'reflect', 'lightscreen', 'safeguard',
-            'mist', 'luckychant']
-        weathers = ['sunnyday', 'desolateland', 'raindance', 'primordialsea',
-            'sandstorm', 'hail', 'deltastream']
-        terrains = ['electricterrain', 'grassyterrain', 'mistyterrain', 'psychicterrain']
-        field_effects = ['wonderroom', 'magicroom', 'trickroom', 'gravity']
+        self.boosts_ = ['atk', 'def', 'spa', 'spd', 'spe', 'accuracy', 'evasion']
+        self.poke_effects_ = ['confusion', 'curse', 'embargo', 'encore',
+            'healblock', 'foresight', 'miracleeye', 'attract', 'leechseed',
+            'nightmare', 'perish3', 'perish2', 'perish1', 'taunt', 'telekinesis',
+            'torment', 'aquaring', 'ingrain', 'magnetrise', 'powertrick',
+            'focusenergy', 'substitute']
+        self.side_effects_ = ['stealthrock', 'spikes', 'toxicspikes',
+            'stickyweb', 'tailwind', 'auroraveil', 'reflect', 'lightscreen',
+            'safeguard', 'mist', 'luckychant']
+        self.weathers_ = ['sunnyday', 'desolateland', 'raindance',
+            'primordialsea', 'sandstorm', 'hail', 'deltastream']
+        self.terrains_ = ['electricterrain', 'grassyterrain', 'mistyterrain',
+            'psychicterrain']
+        self.field_effects_ = ['wonderroom', 'magicroom', 'trickroom', 'gravity']
         self.team = None
         self.active = None
         self.mega = False
         self.zmove = False
-        self.boosts = {stat:0 for stat in boosts}
-        self.poke_effects = {eff:False for eff in poke_effects}
-        self.side_effects = {eff:False for eff in side_effects}
+        self.boosts = {stat:0 for stat in self.boosts_}
+        self.poke_effects = {eff:False for eff in self.poke_effects_}
+        self.side_effects = {eff:False for eff in self.side_effects_}
         self.side_effects['spikes'] = 0
         self.side_effects['toxicspikes'] = 0
         self.opp_team = None
         self.opp_active = None
         self.opp_mega = False
         self.opp_zmove = False
-        self.opp_boosts = {stat:0 for stat in boosts}
-        self.opp_poke_effects = {eff:False for eff in poke_effects}
-        self.opp_side_effects = {eff:False for eff in side_effects}
+        self.opp_boosts = {stat:0 for stat in self.boosts_}
+        self.opp_poke_effects = {eff:False for eff in self.poke_effects_}
+        self.opp_side_effects = {eff:False for eff in self.side_effects_}
         self.opp_side_effects['spikes'] = 0
         self.opp_side_effects['toxicspikes'] = 0
         self.weather = None
         self.terrain = None
-        self.field_effects = {eff:False for eff in field_effects}
+        self.field_effects = {eff:False for eff in self.field_effects_}
 
+    def reset(self):
+        self.team = None
+        self.active = None
+        self.mega = False
+        self.zmove = False
+        self.opp_team = None
+        self.opp_active = None
+        self.opp_mega = False
+        self.opp_zmove = False
+        for stat in self.boosts_:
+            self.boosts[stat] = 0
+            self.opp_boosts[stat] = 0
+        for eff in self.poke_effects_:
+            self.poke_effects[eff] = False
+            self.opp_poke_effects[eff] = False
+        for eff in self.side_effects_:
+            if eff == 'spikes' or eff == 'toxicspikes':
+                self.side_effects[eff] = 0
+                self.opp_side_effects[eff] = 0
+            else:
+                self.side_effects[eff] = False
+                self.opp_side_effects[eff] = False
+        self.weather = None
+        self.terrain = None
+        for eff in self.field_effects:
+            self.field_effects[eff] = False
+        
     def boost_list(self):
-        boosts = ['atk', 'def', 'spa', 'spd', 'spe', 'accuracy', 'evasion']
-        return [self.boosts[stat] for stat in boosts]
+        return [self.boosts[stat] for stat in self.boosts_]
 
     def opp_boost_list(self):
-        boosts = ['atk', 'def', 'spa', 'spd', 'spe', 'accuracy', 'evasion']
-        return [self.opp_boosts[stat] for stat in boosts]
+        return [self.opp_boosts[stat] for stat in self.boosts_]

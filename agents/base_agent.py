@@ -2,8 +2,9 @@ import random
 import logging
 import json
 import re
-from pokemon import Pokemon, Move, GameData, clean_name
-from dex import movedex, itemdex
+import numpy as np
+from pokemon import Pokemon, Move, GameData
+from dex import *
 
 def parse_pokemon(s):
     """Get player num and pokemon nickname"""
@@ -13,14 +14,39 @@ def parse_pokemon(s):
 class Agent:
     def __init__(self, player_name):
         self.player_name = player_name
-        self.player_num = None
+        self.game_data = GameData()
+        self.init_battle()
         self.logger = logging.getLogger(__name__)
         if len(self.logger.handlers) == 0:
             self.logger.addHandler(logging.StreamHandler())
-        self.game_data = GameData()
+        self.poke_to_ix = {poke:i for i, poke in enumerate(pokedex)}
+        self.move_to_ix = {move:i for i, move in enumerate(movedex)}
+        #Assign index 0 to having no item
+        self.item_to_ix = {item:i+1 for i, item in enumerate(itemdex)}
+        self.item_to_ix[''] = 0
+        abilities = set()
+        for p in pokedex:
+            for a in pokedex[p]['abilities']:
+                abilities.add(clean_name(a))
+        #Assign index 0 to having no ability
+        self.ability_to_ix = {a:i+1 for i, a in enumerate(abilities)}
+        self.ability_to_ix[''] = 0
+        self.types = {'bug': 0, 'dark': 1, 'dragon': 2, 'electric': 3,
+            'fairy': 4, 'fighting': 5, 'fire': 6, 'flying': 7, 'ghost': 8,
+            'grass': 9, 'ground': 10, 'ice': 11, 'normal': 12, 'poison': 13,
+            'psychic': 14, 'rock': 15, 'steel': 16, 'water': 17}
+        self.move_categories = {'physical': 0, 'special': 1, 'status': 2}
+        self.move_targets = {'normal': 0, 'self': 1, 'all': 2, 'foeSide': 3,
+            'adjacentAlly': 4, 'allySide': 5, 'allyTeam': 6}
+        self.poke_statuses = {'brn': 0, 'frz': 1, 'par': 2, 'psn': 3, 'tox': 4,
+            'slp': 5, 'fnt': 6}
+
+    def init_battle(self):
+        self.player_num = None
         self.wait_game = True
         self.force_switch = False
         self.choose_start = False
+        self.game_data.reset()
 
     def choose_action(self):
         if self.wait_game:
@@ -358,6 +384,8 @@ class Agent:
             opp = self.game_data.opp_active
             if player == self.player_num:
                 self.game_data.boosts = self.game_data.opp_boosts.copy()
+                #Update opponent data before transforming because
+                #p.transform copies opponent data
                 opp.set_ability(p.ability)
                 opp.moves = []
                 for move in p.moves:
@@ -514,6 +542,130 @@ class Agent:
                 p = self.get_active(target)
                 name = clean_name(m.group(2))
                 if m.group(1) == 'item':
-                    p.item = name
+                    #Don't update if it's a berry, since they're consumed
+                    #Not completely sure this always works
+                    if not name.endswith('berry'):
+                        p.item = name
                 elif m.group(1) == 'ability':
                     p.set_ability(name)
+
+    def move_to_features(self, move):
+        #features: move index, type (18), category (3), power, accuracy,
+        #priority, pp, target (7), disabled
+        features = np.zeros(34)
+        features[0] = self.move_to_ix[move.name]
+        features[1 + self.types[move.move_type]] = 1
+        features[19 + self.move_categories[move.category]] = 1
+        features[22] = move.power
+        features[23] = move.accuracy
+        features[24] = move.priority
+        features[25] = move.pp
+        features[26 + self.move_targets[move.target]] = 1
+        features[33] = move.disabled
+        return features
+
+    def poke_to_features(self, poke):
+        #features: poke index, ability index, ability known,
+        #base stats (6), types (18), level, health, max health, 
+        #status (7), item index, item known, stats (5), stats known
+        features = np.zeros(45)
+        features[0] = self.poke_to_ix[poke.name]
+        if poke.ability != None:
+            features[1] = self.ability_to_ix[poke.ability]
+            features[2] = 1
+        features[3] = poke.base_stats['hp']
+        features[4] = poke.base_stats['atk']
+        features[5] = poke.base_stats['def']
+        features[6] = poke.base_stats['spa']
+        features[7] = poke.base_stats['spd']
+        features[8] = poke.base_stats['spe']
+        for t in poke.types:
+            if t: #poke can be typeless
+                features[9 + self.types[t]] = 1
+        features[27] = poke.level
+        features[28] = poke.health
+        features[29] = poke.max_health
+        if poke.status:
+            features[30 + self.poke_statuses[poke.status]] = 1
+        if poke.item != None:
+            features[37] = self.item_to_ix[poke.item]
+            features[38] = 1
+        if poke.stats != None:
+            features[39] = poke.stats['atk']
+            features[40] = poke.stats['def']
+            features[41] = poke.stats['spa']
+            features[42] = poke.stats['spd']
+            features[43] = poke.stats['spe']
+            features[44] = 1
+        return features
+
+    def game_to_features(self):
+        #features: own pokemon and poke known x6 (276),
+        #opp pokemon and poke known x6 (276),
+        #own moves and move known x4 (140),
+        #opp moves and move known x4 (140),
+        #own boosts (7), opp boosts (7), own poke effects (22),
+        #opp poke effects (22), own side effects (11), opp side effects (11),
+        #weathers (7), terrains (4), field effects (4),
+        #mega, opp mega, zmove, opp zmove
+        #Currently excluding moves of non-active pokemon from features
+        features = np.zeros(931)
+        fi = 0
+        poke_len = 45
+        for i in range(6):
+            f = self.poke_to_features(self.game_data.team[i])
+            features[fi:fi + poke_len] = f
+            features[fi + poke_len] = 1
+            fi += poke_len + 1
+        for i in range(6):
+            opp = self.game_data.opp_team[i]
+            if opp != None:
+                opp_f = self.poke_to_features(opp, True)
+                features[fi:fi + poke_len] = opp_f
+                features[fi + poke_len] = 1
+            fi += poke_len + 1
+        move_len = 34
+        for i in range(4):
+            f = self.move_to_features(self.game_data.active.moves[i])
+            features[fi:fi + move_len] = f
+            features[fi + move_len] = 1
+            fi += move_len + 1
+        for i in range(4):
+            opp_move = self.game_data.opp_active.moves[i]
+            if opp_move != None:
+                opp_f = self.move_to_features(opp_move)
+                features[fi:fi + move_len] = f
+                features[fi + move_len ] = 1
+            fi += move_len + 1
+        features[fi:fi + 7] = self.game_data.boost_list()
+        fi += 7
+        features[fi:fi + 7] = self.game_data.opp_boost_list()
+        fi += 7
+        poke_eff_len = len(self.game_data.poke_effects_)
+        for eff in self.game_data.poke_effects_:
+            features[fi] = self.game_data.poke_effects[eff]
+            features[fi + poke_eff_len] = self.game_data.opp_poke_effects[eff]
+            fi += 1
+        fi += poke_eff_len
+        side_eff_len = len(self.game_data.side_effects_)
+        for eff in self.game_data.side_effects_:
+            features[fi] = self.game_data.side_effects[eff]
+            features[fi + side_eff_len] = self.game_data.opp_side_effects[eff]
+            fi += 1
+        fi += side_eff_len
+        if self.game_data.weather:
+            i = self.game_data.weathers_.index(self.game_data.weather)
+            features[fi + i] = 1
+        fi += len(self.game_data.weathers_)
+        if self.game_data.terrain:
+            i = self.game_data.terrains_.index(self.game_data.terrain)
+            features[fi + i] = 1
+        fi += len(self.game_data.terrains_)
+        for eff in self.game_data.field_effects_:
+            features[fi] = self.game_data.field_effects[eff]
+            fi += 1
+        features[fi] = self.game_data.mega
+        features[fi + 1] = self.game_data.opp_mega
+        features[fi + 2] = self.game_data.zmove
+        features[fi + 3] = self.game_data.opp_zmove
+        return features
